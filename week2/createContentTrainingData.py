@@ -1,13 +1,29 @@
 import argparse
-import multiprocessing
 import glob
-from tqdm import tqdm
+import multiprocessing
 import os
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+import nltk
+from nltk import word_tokenize, PorterStemmer
+from tqdm import tqdm
+
+nltk.download('averaged_perceptron_tagger')
+nltk.download('universal_tagset')
+
+
 def transform_name(product_name):
-    # IMPLEMENT
+    if args.transform:
+        # https://www.geeksforgeeks.org/python-stemming-words-with-nltk/
+        #print(f"product name {product_name}")
+        words = word_tokenize(product_name)
+        #print(f"words {words}")
+        stemmer = PorterStemmer()
+        stemmed_tokens = [stemmer.stem(token) for token in words]
+        transformed_product_name = " ".join(stemmed_tokens)
+        #print(f"transformed_product_name {transformed_product_name}")
+        return transformed_product_name
     return product_name
 
 # Directory for product data
@@ -18,6 +34,7 @@ general = parser.add_argument_group("general")
 general.add_argument("--input", default=directory,  help="The directory containing product data")
 general.add_argument("--output", default="/workspace/datasets/fasttext/output.fasttext", help="the file to output to")
 general.add_argument("--label", default="id", help="id is default and needed for downsteam use, but name is helpful for debugging")
+general.add_argument("--transform", default=False, type=bool,help="if set, do transformations on product name using nltk")
 
 # IMPLEMENT: Setting min_products removes infrequent categories and makes the classifier's task easier.
 general.add_argument("--min_products", default=0, type=int, help="The minimum number of products per category (default is 0).")
@@ -61,9 +78,20 @@ def _label_filename(filename):
 if __name__ == '__main__':
     files = glob.glob(f'{directory}/*.xml')
     print("Writing results to %s" % output_file)
+    products_by_category = {}
     with multiprocessing.Pool() as p:
         all_labels = tqdm(p.imap(_label_filename, files), total=len(files))
-        with open(output_file, 'w') as output:
-            for label_list in all_labels:
-                for (cat, name) in label_list:
-                    output.write(f'__label__{cat} {name}\n')
+        for label_list in all_labels:
+            for (cat, name) in label_list:
+
+                if products_by_category.get(cat) is None:
+                    products_by_category[cat] = []
+
+                products_by_category.get(cat).append(name)
+
+    print("Writing results to %s" % output_file)
+    with open(output_file, 'w') as output:
+        for key in products_by_category.keys():
+            if len(products_by_category[key]) >= min_products:
+                for product in products_by_category[key]:
+                    output.write(f'__label__{key} {product}\n')
