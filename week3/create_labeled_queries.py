@@ -4,19 +4,21 @@ import xml.etree.ElementTree as ET
 import pandas as pd
 import numpy as np
 import csv
+import re
 
 # Useful if you want to perform stemming.
 import nltk
+
 stemmer = nltk.stem.PorterStemmer()
 
-categories_file_name = r'/workspace/datasets/product_data/categories/categories_0001_abcat0010000_to_pcmcat99300050000.xml'
+categories_file_name = r'./workspace/datasets/product_data/categories/categories_0001_abcat0010000_to_pcmcat99300050000.xml'
 
-queries_file_name = r'/workspace/datasets/train.csv'
-output_file_name = r'/workspace/datasets/fasttext/labeled_queries.txt'
+queries_file_name = r'./workspace/datasets/train.csv'
+output_file_name = r'./workspace/datasets/fasttext/labeled_queries.txt'
 
 parser = argparse.ArgumentParser(description='Process arguments.')
 general = parser.add_argument_group("general")
-general.add_argument("--min_queries", default=1,  help="The minimum number of queries per category label (default is 1)")
+general.add_argument("--min_queries", default=1, help="The minimum number of queries per category label (default is 1)")
 general.add_argument("--output", default=output_file_name, help="the file to output to")
 
 args = parser.parse_args()
@@ -42,20 +44,36 @@ for child in root:
     if leaf_id != root_category_id:
         categories.append(leaf_id)
         parents.append(cat_path_ids[-2])
-parents_df = pd.DataFrame(list(zip(categories, parents)), columns =['category', 'parent'])
+parents_df = pd.DataFrame(list(zip(categories, parents)), columns=['category', 'parent'])
 
 # Read the training data into pandas, only keeping queries with non-root categories in our category tree.
 queries_df = pd.read_csv(queries_file_name)[['category', 'query']]
 queries_df = queries_df[queries_df['category'].isin(categories)]
 
-# IMPLEMENT ME: Convert queries to lowercase, and optionally implement other normalization, like stemming.
+
+def normalize(query: str):
+    striped_result = query.strip()
+    alpha_num_result = re.sub(r'[^a-zA-Z0-9]', ' ', striped_result)
+    result = re.sub(r"\s+", ' ', alpha_num_result)
+    result = stemmer.stem(result, to_lowercase=True)
+    return result
+
+
+queries_df['query'] = queries_df['query'].apply(normalize)
 
 # IMPLEMENT ME: Roll up categories to ancestors to satisfy the minimum number of queries per category.
-
+queries_df["count"] = queries_df.groupby('category')['category'].transform('count')
+while len(queries_df.loc[queries_df["count"] < min_queries]["count"]) > 0:
+    queries_df = pd.merge(queries_df, parents_df, on="category", how="left")
+    queries_df["category"] = pd.DataFrame(queries_df.apply(lambda x: x["parent"] if x["count"] < min_queries else  x["category"], axis=1).to_list(),index=queries_df.index)
+    queries_df["count"] = queries_df.groupby('category')['category'].transform('count')
+    queries_df = queries_df.drop(["parent"], axis=1)
+print("Unique categories: ", len(queries_df["category"].unique()))
 # Create labels in fastText format.
 queries_df['label'] = '__label__' + queries_df['category']
 
 # Output labeled query data as a space-separated file, making sure that every category is in the taxonomy.
 queries_df = queries_df[queries_df['category'].isin(categories)]
 queries_df['output'] = queries_df['label'] + ' ' + queries_df['query']
-queries_df[['output']].to_csv(output_file_name, header=False, sep='|', escapechar='\\', quoting=csv.QUOTE_NONE, index=False)
+queries_df[['output']].to_csv(output_file_name, header=False, sep='|', escapechar='\\', quoting=csv.QUOTE_NONE,
+                              index=False)
